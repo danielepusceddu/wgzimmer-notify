@@ -2,6 +2,8 @@ import requests
 import json
 import time
 import random
+import tomllib
+from datetime import datetime
 from typing import Optional
 from pprint import pprint
 from bs4 import BeautifulSoup
@@ -17,25 +19,7 @@ from fake_useragent import UserAgent
 
 BASE = "https://www.wgzimmer.ch/wgzimmer/search/mate/ch/{0}.html"
 ICON = "https://www.wgzimmer.ch/.resources/wgzimmer/webresources/legacy/social-icons/android-icon-192x192.png"
-
-# The last one is the one for "Unterland" for some reason
-WGSTATES = [
-    "zurich-stadt",
-    "zurich-oberland",
-    "zurich-altstetten",
-    "zurich-oerlikon",
-    "zurich-lake",
-    "zurich",
-]
-
-PRICEMAX = 800
-
-PARAMS = {
-    "priceMax": PRICEMAX,
-    "student": "none",
-    "permanent": "all",
-    "typeofwg": "all",
-}
+NTFY_TOPIC = ""
 
 SEEN_IDS = []
 
@@ -55,7 +39,7 @@ URL: {url}
         "https://ntfy.sh/",
         data=json.dumps(
             {
-                "topic": TOPIC,
+                "topic": NTFY_TOPIC,
                 "message": message.format(**listing),
                 "title": title.format(**listing),
                 "icon": ICON,
@@ -115,13 +99,13 @@ def send_error(e):
                 "https://ntfy.sh/",
                 data=json.dumps(
                     {
-                        "topic": TOPIC,
+                        "topic": NTFY_TOPIC,
                         "title": "❌ Error checking WG Zimmer!",
                         "message": str(e),
                         "icon": ICON,
                     }
                 ),
-                headers={"Priority": "2"}
+                headers={"Priority": "2"},
             )
 
             break
@@ -130,7 +114,9 @@ def send_error(e):
             time.sleep(5)
 
 
-def try_selenium(wgState: str) -> Optional[str]:
+def try_selenium(wgState: str, priceMax: str) -> Optional[str]:
+    driver = None
+
     try:
         userAgent = UserAgent().random
 
@@ -159,7 +145,7 @@ def try_selenium(wgState: str) -> Optional[str]:
 
         # Price max
         price_max = Select(driver.find_element(By.NAME, "priceMax"))
-        price_max.select_by_value(str(PRICEMAX))
+        price_max.select_by_value(priceMax)
 
         time.sleep(random.randint(1, 5))
 
@@ -181,10 +167,14 @@ def try_selenium(wgState: str) -> Optional[str]:
         return None
 
     finally:
-        driver.close()
+        if driver:
+            driver.close()
 
 
 def main():
+    global SEEN_IDS
+    global NTFY_TOPIC
+
     while True:
         try:
             response = requests.get("https://one.one.one.one")
@@ -196,29 +186,52 @@ def main():
 
     try:
         listings = {}
+        config = {}
+        params = {}
+        cache = {}
         new = 0
 
-        with open("seen.txt", "a+") as f:
-            f.seek(0)
-            SEEN_IDS.extend(f.read().splitlines())
+        with open("config.toml", "rb") as f:
+            config = tomllib.load(f)
+            NTFY_TOPIC = config["ntfy"]["topic"]
+            params = {
+                "priceMax": config["wgzimmer"]["priceMax"],
+                "student": config["wgzimmer"]["student"],
+                "permanent": config["wgzimmer"]["permanent"],
+                "typeofwg": config["wgzimmer"]["typeofwg"],
+            }
 
-        for wgstate in WGSTATES:
-            response = requests.get(BASE.format(wgstate), params=PARAMS)
+        with open("cache.json", "r") as f:
+            cache = json.load(f)
+            SEEN_IDS = cache["seen"]
+
+        print("Loaded config and cache")
+
+        for wgstate in config["wgzimmer"]["wgStates"]:
+            response = requests.get(BASE.format(wgstate), params=params)
 
             if response.status_code == 200 and "search-result-list" in response.text:
                 listings |= parse_html(response.text)
-                continue
-
-            print(f"Failed to get listings for {wgstate}, trying with Selenium...")
-
-            html = try_selenium(wgstate)
-
-            if html and "search-result-list" in html:
-                listings |= parse_html(html)
-            elif html and "Google reCaptcha" in html:
-                send_error(f"Failed to get listings for {wgstate}, reCaptcha error.")
             else:
-                send_error(f"Failed to get listings for {wgstate}, no results found.")
+
+                print(f"Failed to get listings for {wgstate}, trying with Selenium...")
+                html = try_selenium(wgstate, config["wgzimmer"]["priceMax"])
+
+                if html and "search-result-list" in html:
+                    listings |= parse_html(html)
+                elif html and "Google reCaptcha" in html:
+                    # send_error(f"Failed to get listings for {wgstate}, reCaptcha error.")
+                    continue
+                else:
+                    # send_error(f"Failed to get listings for {wgstate}, no results found.")
+                    continue
+
+            if "last_checked" not in cache:
+                cache["last_checked"] = {}
+
+            cache["last_checked"][wgstate] = datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
 
         for id, listing in listings.items():
             if id not in SEEN_IDS:
@@ -226,25 +239,30 @@ def main():
                 notify(listing)
                 new += 1
 
-        with open("seen.txt", "w") as f:
-            f.write("\n".join(SEEN_IDS))
+        with open("cache.json", "w") as f:
+            cache["seen"] = SEEN_IDS
+            json.dump(cache, f, indent=4)
 
         requests.post(
             "https://ntfy.sh/",
             data=json.dumps(
                 {
-                    "topic": TOPIC,
+                    "topic": NTFY_TOPIC,
                     "title": "Done checking for new listings!",
-                    "message": f"Found {new} new listings",
+                    "message": f"Found {new} new listings\n\nLast checked:\n"
+                    + "\n".join(
+                        [f"- {k}: {v}" for k, v in cache["last_checked"].items()]
+                    ),
                     "icon": ICON,
                 }
             ),
-            headers={"Priority": "1"}
+            headers={"Priority": "1", "Markdown": "yes"},
         )
 
         print(f"Found {new} new listings")
 
     except Exception as eOut:
+        print(eOut)
         send_error(eOut)
 
 
