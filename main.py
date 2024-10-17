@@ -215,7 +215,7 @@ def main():
             else:
 
                 print(f"Failed to get listings for {wgstate}, trying with Selenium...")
-                html = try_selenium(wgstate, config["wgzimmer"]["priceMax"])
+                html = try_selenium(wgstate, str(config["wgzimmer"]["priceMax"]))
 
                 if html and "search-result-list" in html:
                     listings |= parse_html(html)
