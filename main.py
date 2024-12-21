@@ -16,39 +16,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 
 from fake_useragent import UserAgent
+from notify_discord import notify, send_error, notify_done
 
 BASE = "https://www.wgzimmer.ch/wgzimmer/search/mate/ch/{0}.html"
-ICON = "https://www.wgzimmer.ch/.resources/wgzimmer/webresources/legacy/social-icons/android-icon-192x192.png"
 NTFY_TOPIC = ""
 
 SEEN_IDS = []
-
-
-def notify(listing):
-    title = "🏠 WG Zimmer: {location}, {date}, {price} CHF"
-
-    message = """
-Location: {location}, {location_extra}
-Posted on: {posted}
-Date: {date}
-Price: {price} CHF
-URL: {url}
-"""
-
-    requests.post(
-        "https://ntfy.sh/",
-        data=json.dumps(
-            {
-                "topic": NTFY_TOPIC,
-                "message": message.format(**listing),
-                "title": title.format(**listing),
-                "icon": ICON,
-                "actions": [
-                    {"action": "view", "label": "Show Listing", "url": listing["url"]}
-                ],
-            }
-        ),
-    )
 
 
 def parse_html(html):
@@ -90,28 +63,6 @@ def parse_html(html):
             output[id]["price"] = price.text.strip()
 
     return output
-
-
-def send_error(e):
-    while True:
-        try:
-            requests.post(
-                "https://ntfy.sh/",
-                data=json.dumps(
-                    {
-                        "topic": NTFY_TOPIC,
-                        "title": "❌ Error checking WG Zimmer!",
-                        "message": str(e),
-                        "icon": ICON,
-                    }
-                ),
-                headers={"Priority": "2"},
-            )
-
-            break
-        except Exception as eIn:
-            print(e)
-            time.sleep(5)
 
 
 def try_selenium(wgState: str, priceMax: str) -> Optional[str]:
@@ -173,7 +124,6 @@ def try_selenium(wgState: str, priceMax: str) -> Optional[str]:
 
 def main():
     global SEEN_IDS
-    global NTFY_TOPIC
 
     while True:
         try:
@@ -193,7 +143,6 @@ def main():
 
         with open("config.toml", "rb") as f:
             config = tomllib.load(f)
-            NTFY_TOPIC = config["ntfy"]["topic"]
             params = {
                 "priceMax": config["wgzimmer"]["priceMax"],
                 "student": config["wgzimmer"]["student"],
@@ -243,21 +192,7 @@ def main():
             cache["seen"] = SEEN_IDS
             json.dump(cache, f, indent=4)
 
-        requests.post(
-            "https://ntfy.sh/",
-            data=json.dumps(
-                {
-                    "topic": NTFY_TOPIC,
-                    "title": "Done checking for new listings!",
-                    "message": f"Found {new} new listings\n\nLast checked:\n"
-                    + "\n".join(
-                        [f"- {k}: {v}" for k, v in cache["last_checked"].items()]
-                    ),
-                    "icon": ICON,
-                }
-            ),
-            headers={"Priority": "1", "Markdown": "yes"},
-        )
+        notify_done(new, cache)
 
         print(f"Found {new} new listings")
 
