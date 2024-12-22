@@ -1,0 +1,19 @@
+# Configuration file for the script
+[notifier]
+type = "discord" # or ntfy
+
+[discord]
+main_webhook = "https://discord.com/api/webhooks/???/???"
+log_webhook = "https://discord.com/api/webhooks/???/???"
+
+[ntfy]
+# Replace with your desired topic for notifications
+topic = "example_topic"
+
+[wgzimmer]
+# Maximum price for a listing (e.g., in CHF or your local currency)
+priceMax = 900
+student = "all"
+permanent = "all"
+typeofwg = "all"
+wgStates = ["zurich"]
