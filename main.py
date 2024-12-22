@@ -16,7 +16,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 
 from fake_useragent import UserAgent
-from notify_discord import notify, send_error, notify_done
 
 BASE = "https://www.wgzimmer.ch/wgzimmer/search/mate/ch/{0}.html"
 NTFY_TOPIC = ""
@@ -150,6 +149,15 @@ def main():
                 "typeofwg": config["wgzimmer"]["typeofwg"],
             }
 
+            notifiertype = config["notifier"]["type"]
+            if notifiertype == "discord":
+                from notify_discord import DiscordNotifier
+                notifier = DiscordNotifier(config["discord"]["main_webhook"], config["discord"]["log_webhook"])
+            elif notifiertype == "ntfy":
+                from notify_ntfy import NtfyNotifier
+                notifier = NtfyNotifier(config["ntfy"]["topic"])
+
+
         with open("cache.json", "r") as f:
             cache = json.load(f)
             SEEN_IDS = cache["seen"]
@@ -185,20 +193,20 @@ def main():
         for id, listing in listings.items():
             if id not in SEEN_IDS:
                 SEEN_IDS.append(id)
-                notify(listing)
+                notifier.notify(listing)
                 new += 1
 
         with open("cache.json", "w") as f:
             cache["seen"] = SEEN_IDS
             json.dump(cache, f, indent=4)
 
-        notify_done(new, cache)
+        notifier.notify_done(new, cache)
 
         print(f"Found {new} new listings")
 
     except Exception as eOut:
         print(eOut)
-        send_error(eOut)
+        notifier.send_error(eOut)
 
 
 if __name__ == "__main__":
